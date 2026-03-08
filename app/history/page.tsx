@@ -23,8 +23,33 @@ import {
 import { cn } from '@/lib/utils';
 import type { AssetType, TradingSignal } from '@/lib/types/arbitrage';
 
-// Generate mock historical data
+const FR_MONTHS_SHORT = ['jan.', 'fév.', 'mar.', 'avr.', 'mai', 'jun.', 'jul.', 'aoû.', 'sep.', 'oct.', 'nov.', 'déc.'];
+
+/** Format a date using UTC fields — identical on server and client regardless of timezone */
+function fmtDateUTC(d: Date): string {
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  const month = FR_MONTHS_SHORT[d.getUTCMonth()];
+  return `${day} ${month}`;
+}
+
+function fmtTimeUTC(d: Date): string {
+  const h = String(d.getUTCHours()).padStart(2, '0');
+  const m = String(d.getUTCMinutes()).padStart(2, '0');
+  return `${h}:${m}`;
+}
+
+// Deterministic LCG pseudo-random number generator — avoids SSR/client hydration mismatch
+function createRng(seed: number) {
+  let s = seed;
+  return () => {
+    s = (s * 1664525 + 1013904223) & 0xffffffff;
+    return (s >>> 0) / 0x100000000;
+  };
+}
+
+// Generate mock historical data using a fixed seed so SSR and client produce identical output
 function generateHistoricalSignals(count: number): TradingSignal[] {
+  const rng = createRng(42);
   const signals: TradingSignal[] = [];
   const instruments = [
     { id: 'DE000A0S9GB0', name: 'Xetra-Gold', type: 'GOLD' as AssetType },
@@ -36,14 +61,19 @@ function generateHistoricalSignals(count: number): TradingSignal[] {
   const signalTypes: ('BUY' | 'SELL' | 'WATCH')[] = ['BUY', 'SELL', 'WATCH'];
   const statuses: ('TRIGGERED' | 'EXPIRED' | 'ACKNOWLEDGED')[] = ['TRIGGERED', 'EXPIRED', 'ACKNOWLEDGED'];
 
+  // Use a fixed reference date so timestamps are stable across renders
+  const REF_DATE = new Date('2026-03-08T12:00:00.000Z');
+
   for (let i = 0; i < count; i++) {
-    const instrument = instruments[Math.floor(Math.random() * instruments.length)];
-    const signalType = signalTypes[Math.floor(Math.random() * signalTypes.length)];
-    const daysAgo = Math.floor(Math.random() * 30);
-    const date = new Date();
+    const instrument = instruments[Math.floor(rng() * instruments.length)];
+    const signalType = signalTypes[Math.floor(rng() * signalTypes.length)];
+    const daysAgo = Math.floor(rng() * 30);
+    const date = new Date(REF_DATE);
     date.setDate(date.getDate() - daysAgo);
-    date.setHours(Math.floor(Math.random() * 10) + 8);
-    date.setMinutes(Math.floor(Math.random() * 60));
+    date.setUTCHours(Math.floor(rng() * 10) + 8);
+    date.setUTCMinutes(Math.floor(rng() * 60));
+
+    const r1 = rng(), r2 = rng(), r3 = rng(), r4 = rng(), r5 = rng(), r6 = rng();
 
     signals.push({
       id: `sig-hist-${i}`,
@@ -51,18 +81,18 @@ function generateHistoricalSignals(count: number): TradingSignal[] {
       instrumentId: instrument.id,
       instrumentName: instrument.name,
       signalType,
-      spreadPct: (Math.random() * 4 - 2),
-      spreadBps: (Math.random() * 400 - 200),
-      zScore: (Math.random() * 4 - 2),
-      confidence: Math.random() > 0.5 ? 'HIGH' : Math.random() > 0.3 ? 'MEDIUM' : 'LOW',
-      rationale: signalType === 'BUY' 
+      spreadPct: r1 * 4 - 2,
+      spreadBps: r2 * 400 - 200,
+      zScore: r3 * 4 - 2,
+      confidence: r4 > 0.5 ? 'HIGH' : r4 > 0.3 ? 'MEDIUM' : 'LOW',
+      rationale: signalType === 'BUY'
         ? 'Prix TR nettement sous la référence Binance'
         : signalType === 'SELL'
         ? 'Prix TR au-dessus de la référence Binance avec z-score élevé'
         : 'Écart proche du seuil, surveillance',
-      priceAtSignal: instrument.type === 'GOLD' ? 70 + Math.random() * 5 : 30 + Math.random() * 3,
+      priceAtSignal: instrument.type === 'GOLD' ? 70 + r5 * 5 : 30 + r6 * 3,
       timestamp: date.toISOString(),
-      status: statuses[Math.floor(Math.random() * statuses.length)],
+      status: statuses[Math.floor(rng() * statuses.length)],
       priority: signalType === 'BUY' ? 'HIGH' : signalType === 'SELL' ? 'HIGH' : 'NORMAL',
     });
   }
@@ -149,8 +179,8 @@ export default function HistoryPage() {
     const rows = filteredSignals.map(s => {
       const date = new Date(s.timestamp);
       return [
-        date.toLocaleDateString(),
-        date.toLocaleTimeString(),
+          fmtDateUTC(date),
+          fmtTimeUTC(date),
         s.assetType,
         s.instrumentName,
         s.signalType,
@@ -330,10 +360,10 @@ export default function HistoryPage() {
                     >
                       <td className="p-3">
                         <div className="font-mono text-sm">
-                          {date.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })}
+                          {fmtDateUTC(date)}
                         </div>
                         <div className="font-mono text-xs text-muted-foreground">
-                          {date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                          {fmtTimeUTC(date)}
                         </div>
                       </td>
                       <td className="p-3">
