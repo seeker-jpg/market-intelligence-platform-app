@@ -49,7 +49,8 @@ export default function DashboardPage() {
       
       const paxgPrice = snapshot.xauUsd.price || 2650;
       const eurUsd = snapshot.eurUsd.price || 1.08;
-      const silverPriceUsd = paxgPrice / GOLD_SILVER_RATIO.default;
+      // Use real XAG price from CoinGecko if available, otherwise fallback to gold/silver ratio
+      const silverPriceUsd = snapshot.xagUsd.price || paxgPrice / GOLD_SILVER_RATIO.default;
       
       setGoldPrice(paxgPrice);
       setSilverPrice(silverPriceUsd);
@@ -119,38 +120,46 @@ export default function DashboardPage() {
       const activeSignals = getActiveSignals();
       setSignals(activeSignals);
       
-      // Mise à jour du ticker
+      // Mise à jour du ticker – or & argent uniquement
       setTickerItems([
         {
-          symbol: 'PAXG',
-          name: 'PAX Gold',
+          symbol: 'XAU/USD',
+          name: 'Or',
           price: paxgPrice,
-          change: Math.random() * 20 - 10,
-          changePercent: Math.random() * 2 - 1,
+          change: 0,
+          changePercent: 0,
           currency: 'USD',
         },
         {
-          symbol: 'XAG',
-          name: 'Silver',
+          symbol: 'XAG/USD',
+          name: 'Argent',
           price: silverPriceUsd,
-          change: Math.random() * 0.5 - 0.25,
-          changePercent: Math.random() * 3 - 1.5,
+          change: 0,
+          changePercent: 0,
           currency: 'USD',
         },
         {
           symbol: 'EUR/USD',
           name: 'Euro',
           price: eurUsd,
-          change: Math.random() * 0.01 - 0.005,
-          changePercent: Math.random() * 0.5 - 0.25,
+          change: 0,
+          changePercent: 0,
           currency: 'USD',
         },
         {
           symbol: 'XAU/EUR',
-          name: 'Gold EUR',
+          name: 'Or EUR',
           price: paxgPrice / eurUsd,
-          change: Math.random() * 15 - 7.5,
-          changePercent: Math.random() * 1.5 - 0.75,
+          change: 0,
+          changePercent: 0,
+          currency: 'EUR',
+        },
+        {
+          symbol: 'XAG/EUR',
+          name: 'Argent EUR',
+          price: silverPriceUsd / eurUsd,
+          change: 0,
+          changePercent: 0,
           currency: 'EUR',
         },
       ]);

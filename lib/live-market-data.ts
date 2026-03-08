@@ -106,10 +106,10 @@ export async function buildLegacyLiveSnapshot(): Promise<LegacyLiveSnapshot> {
 
   return {
     xau: xau
-      ? { symbol: market.xauUsd.binanceSymbol, bid: xau.bid, ask: xau.ask, price: xau.price, ts: market.timestamp }
+      ? { symbol: 'PAXGUSDT', bid: xau.bid, ask: xau.ask, price: xau.price, ts: market.timestamp }
       : null,
     xag: xag
-      ? { symbol: market.xagUsd.binanceSymbol, bid: xag.bid, ask: xag.ask, price: xag.price, ts: market.timestamp }
+      ? { symbol: 'coingecko:silver', bid: xag.bid, ask: xag.ask, price: xag.price, ts: market.timestamp }
       : null,
     eur: eur
       ? { symbol: market.eurUsd.binanceSymbol, bid: eur.bid, ask: eur.ask, price: eur.price, ts: market.timestamp }
