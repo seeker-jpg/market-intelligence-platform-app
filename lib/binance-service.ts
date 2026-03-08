@@ -1,7 +1,12 @@
 /**
  * Market Data Service
- * Fetches real-time prices for XAU/USD, XAG/USD, EUR/USD
- * Sources: Binance (primary) + CoinGecko (secondary for XAG, fallback)
+ * Sources:
+ *   - XAU/USD : Binance PAXGUSDT (PAXG = 1 troy oz gold)
+ *   - XAG/USD : Yahoo Finance SI=F (silver futures, best free source)
+ *   - EUR/USD  : Binance EURUSDC › EURUSDT › Yahoo Finance EURUSD=X
+ *
+ * CoinGecko was tested for verification but is NOT used in production
+ * because it lacks a reliable "silver" spot price endpoint on the free tier.
  */
 
 export interface BinancePrice {
@@ -16,7 +21,7 @@ export interface MarketPair {
   price: number | null;
   currency: string;
   lastUpdate: string;
-  source: 'binance' | 'coingecko' | 'derived';
+  source: 'binance' | 'yahoo' | 'derived';
 }
 
 export interface MarketSnapshot {
@@ -29,207 +34,159 @@ export interface MarketSnapshot {
   source: string;
 }
 
-// Binance API endpoints
 const BINANCE_API_BASE = 'https://api.binance.com/api/v3';
 
-// CoinGecko API (free tier, no key required for basic endpoints)
-const COINGECKO_API_BASE = 'https://api.coingecko.com/api/v3';
+// ---------------------------------------------------------------------------
+// Binance helpers
+// ---------------------------------------------------------------------------
 
-/**
- * Fetch single ticker price from Binance
- */
 async function fetchBinancePrice(symbol: string): Promise<number | null> {
   try {
-    const response = await fetch(`${BINANCE_API_BASE}/ticker/price?symbol=${symbol}`, {
+    const res = await fetch(`${BINANCE_API_BASE}/ticker/price?symbol=${symbol}`, {
       cache: 'no-store',
       signal: AbortSignal.timeout(5000),
     });
-
-    if (!response.ok) {
-      return null;
-    }
-
-    const data: BinancePrice = await response.json();
-    return parseFloat(data.price);
+    if (!res.ok) return null;
+    const data: BinancePrice = await res.json();
+    const price = parseFloat(data.price);
+    return isFinite(price) && price > 0 ? price : null;
   } catch {
     return null;
   }
 }
 
-/**
- * Fetch multiple ticker prices from Binance
- */
 async function fetchBinancePrices(symbols: string[]): Promise<Map<string, number>> {
   const priceMap = new Map<string, number>();
-
   try {
     const symbolsParam = JSON.stringify(symbols);
-    const response = await fetch(
+    const res = await fetch(
       `${BINANCE_API_BASE}/ticker/price?symbols=${encodeURIComponent(symbolsParam)}`,
-      {
-        cache: 'no-store',
-        signal: AbortSignal.timeout(5000),
-      }
+      { cache: 'no-store', signal: AbortSignal.timeout(5000) }
     );
-
-    if (!response.ok) {
-      // Fallback to individual requests
-      const results = await Promise.all(
-        symbols.map(async (symbol) => {
-          const price = await fetchBinancePrice(symbol);
-          return { symbol, price };
-        })
-      );
-      results.forEach(({ symbol, price }) => {
-        if (price !== null) priceMap.set(symbol, price);
-      });
-      return priceMap;
+    if (!res.ok) throw new Error(`Binance batch ${res.status}`);
+    const data: BinancePrice[] = await res.json();
+    for (const item of data) {
+      const p = parseFloat(item.price);
+      if (isFinite(p) && p > 0) priceMap.set(item.symbol, p);
     }
-
-    const data: BinancePrice[] = await response.json();
-    data.forEach((item) => {
-      priceMap.set(item.symbol, parseFloat(item.price));
-    });
   } catch {
-    // Fallback to individual requests
+    // Fallback: individual requests in parallel
     const results = await Promise.all(
-      symbols.map(async (symbol) => {
-        const price = await fetchBinancePrice(symbol);
-        return { symbol, price };
-      })
+      symbols.map(async (s) => ({ symbol: s, price: await fetchBinancePrice(s) }))
     );
-    results.forEach(({ symbol, price }) => {
+    for (const { symbol, price } of results) {
       if (price !== null) priceMap.set(symbol, price);
-    });
+    }
   }
-
   return priceMap;
 }
 
-/**
- * Fetch gold and silver prices from CoinGecko
- * Returns prices in USD
- * Uses: pax-gold (PAXG) for gold, silver for silver
- */
-async function fetchCoinGeckoPrices(): Promise<{
-  gold: number | null;
-  silver: number | null;
-  eurUsd: number | null;
-}> {
+// ---------------------------------------------------------------------------
+// Yahoo Finance helper — used for XAG/USD and EUR/USD fallback
+// Free, no API key, reliable for spot/futures prices
+// ---------------------------------------------------------------------------
+
+async function fetchYahooPrice(ticker: string): Promise<number | null> {
   try {
-    // CoinGecko has a "silver" coin (real silver price index) and pax-gold for PAXG
-    // For EUR/USD we can use vs_currencies parameter
-    const response = await fetch(
-      `${COINGECKO_API_BASE}/simple/price?ids=pax-gold,silver&vs_currencies=usd,eur`,
-      {
-        cache: 'no-store',
-        signal: AbortSignal.timeout(8000),
-        headers: {
-          Accept: 'application/json',
-        },
-      }
-    );
-
-    if (!response.ok) {
-      return { gold: null, silver: null, eurUsd: null };
-    }
-
-    const data = await response.json();
-
-    const goldUsd: number | null = data['pax-gold']?.usd ?? null;
-    const silverUsd: number | null = data['silver']?.usd ?? null;
-
-    // Derive EUR/USD from gold prices: gold_usd / gold_eur
-    let eurUsd: number | null = null;
-    if (data['pax-gold']?.usd && data['pax-gold']?.eur) {
-      eurUsd = data['pax-gold'].usd / data['pax-gold'].eur;
-    }
-
-    return { gold: goldUsd, silver: silverUsd, eurUsd };
+    // Using the v8 chart endpoint — lightweight, just the latest close
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1m&range=1d`;
+    const res = await fetch(url, {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(8000),
+      headers: {
+        'User-Agent': 'Mozilla/5.0',
+        Accept: 'application/json',
+      },
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    // The regularMarketPrice is the most current price
+    const price: number | undefined =
+      json?.chart?.result?.[0]?.meta?.regularMarketPrice;
+    return typeof price === 'number' && isFinite(price) && price > 0 ? price : null;
   } catch {
-    return { gold: null, silver: null, eurUsd: null };
+    return null;
   }
 }
 
+// ---------------------------------------------------------------------------
+// Main snapshot
+// ---------------------------------------------------------------------------
+
 /**
- * Get complete market snapshot with XAU, XAG, EUR pairs
- * Primary source: Binance for PAXG/USDT and EUR/USDT
- * Secondary source: CoinGecko for silver (XAG) and as fallback
+ * Get complete market snapshot: XAU, XAG, EUR pairs.
+ *
+ * Gold  : Binance PAXGUSDT  (1 PAXG = 1 troy oz gold, priced in USDT ≈ USD)
+ * Silver: Yahoo Finance SI=F (continuous silver futures, closest to spot)
+ * EUR   : Binance EURUSDC › EURUSDT › Yahoo EURUSD=X
  */
 export async function getMarketSnapshot(): Promise<MarketSnapshot> {
   const now = Date.now();
   const timestamp = new Date().toISOString();
 
-  // Fetch from Binance and CoinGecko in parallel
-  const [binancePrices, coinGeckoPrices] = await Promise.all([
-    fetchBinancePrices(['PAXGUSDT', 'EURUSDT', 'EURUSDC']),
-    fetchCoinGeckoPrices(),
+  // Run all fetches in parallel
+  const [binancePrices, silverYahoo, eurYahoo] = await Promise.all([
+    fetchBinancePrices(['PAXGUSDT', 'EURUSDC', 'EURUSDT']),
+    fetchYahooPrice('SI=F'),
+    fetchYahooPrice('EURUSD=X'),
   ]);
 
   // --- XAU/USD ---
-  // Binance PAXG/USDT is the primary source for gold price
-  const paxgUsdtPrice = binancePrices.get('PAXGUSDT') ?? null;
-  const goldPrice = paxgUsdtPrice ?? coinGeckoPrices.gold;
-  const goldSource: 'binance' | 'coingecko' | 'derived' =
-    paxgUsdtPrice != null ? 'binance' : coinGeckoPrices.gold != null ? 'coingecko' : 'derived';
+  const paxgPrice = binancePrices.get('PAXGUSDT') ?? null;
+  const goldSource: 'binance' | 'yahoo' | 'derived' =
+    paxgPrice != null ? 'binance' : 'derived';
 
   // --- EUR/USD ---
-  // Binance EURUSDC preferred, then EURUSDT, then CoinGecko derived
-  const eurUsdcPrice = binancePrices.get('EURUSDC') ?? null;
-  const eurUsdtPrice = binancePrices.get('EURUSDT') ?? null;
-  const binanceEurUsd = eurUsdcPrice ?? eurUsdtPrice;
-  const eurUsdPrice = binanceEurUsd ?? coinGeckoPrices.eurUsd;
-  const eurUsdSource: 'binance' | 'coingecko' | 'derived' =
-    binanceEurUsd != null ? 'binance' : coinGeckoPrices.eurUsd != null ? 'coingecko' : 'derived';
+  const eurUsdcBinance = binancePrices.get('EURUSDC') ?? null;
+  const eurUsdtBinance = binancePrices.get('EURUSDT') ?? null;
+  const binanceEur = eurUsdcBinance ?? eurUsdtBinance;
+  const eurUsdPrice = binanceEur ?? eurYahoo;
+  const eurUsdSource: 'binance' | 'yahoo' | 'derived' =
+    binanceEur != null ? 'binance' : eurYahoo != null ? 'yahoo' : 'derived';
 
   // --- XAG/USD ---
-  // Binance does NOT have a direct XAG pair.
-  // CoinGecko "silver" provides the real spot silver price in USD.
-  const silverPrice = coinGeckoPrices.silver;
-  const silverSource: 'binance' | 'coingecko' | 'derived' =
-    silverPrice != null ? 'coingecko' : 'derived';
-  // Fallback: use gold/silver ratio if CoinGecko is unavailable
-  const silverPriceFinal =
-    silverPrice ?? (goldPrice != null ? goldPrice / 80 : null);
-  const silverSourceFinal: 'binance' | 'coingecko' | 'derived' =
-    silverPrice != null ? 'coingecko' : 'derived';
+  // Primary: Yahoo Finance SI=F (silver futures, continuously traded)
+  // Fallback: gold / ratio 80 (conservative estimate)
+  const silverPrice = silverYahoo ?? (paxgPrice != null ? paxgPrice / 80 : null);
+  const silverSource: 'binance' | 'yahoo' | 'derived' =
+    silverYahoo != null ? 'yahoo' : 'derived';
 
-  // --- XAU/EUR and XAG/EUR (derived) ---
+  // --- Cross rates (derived) ---
   const xauEurPrice =
-    goldPrice != null && eurUsdPrice != null ? goldPrice / eurUsdPrice : null;
+    paxgPrice != null && eurUsdPrice != null ? paxgPrice / eurUsdPrice : null;
   const xagEurPrice =
-    silverPriceFinal != null && eurUsdPrice != null
-      ? silverPriceFinal / eurUsdPrice
-      : null;
+    silverPrice != null && eurUsdPrice != null ? silverPrice / eurUsdPrice : null;
 
   const sourceLabel = [
-    paxgUsdtPrice ? 'Binance(PAXG)' : coinGeckoPrices.gold ? 'CoinGecko(or)' : '',
-    silverPrice ? 'CoinGecko(argent)' : '',
-    binanceEurUsd ? `Binance(EUR/${eurUsdcPrice ? 'USDC' : 'USDT'})` : coinGeckoPrices.eurUsd ? 'CoinGecko(EUR)' : '',
-  ]
-    .filter(Boolean)
-    .join(' + ');
+    paxgPrice ? 'Binance(PAXG)' : 'N/A(or)',
+    silverYahoo ? 'Yahoo(XAG)' : 'ratio(XAG)',
+    binanceEur
+      ? `Binance(EUR/${eurUsdcBinance ? 'USDC' : 'USDT'})`
+      : eurYahoo
+      ? 'Yahoo(EUR)'
+      : 'N/A(EUR)',
+  ].join(' + ');
 
   return {
     xauUsd: {
       pair: 'XAU/USD',
       binanceSymbol: 'PAXGUSDT',
-      price: goldPrice,
+      price: paxgPrice,
       currency: 'USD',
       lastUpdate: timestamp,
       source: goldSource,
     },
     xagUsd: {
       pair: 'XAG/USD',
-      binanceSymbol: 'coingecko:silver',
-      price: silverPriceFinal,
+      binanceSymbol: 'SI=F',
+      price: silverPrice,
       currency: 'USD',
       lastUpdate: timestamp,
-      source: silverSourceFinal,
+      source: silverSource,
     },
     eurUsd: {
       pair: 'EUR/USD',
-      binanceSymbol: eurUsdcPrice ? 'EURUSDC' : 'EURUSDT',
+      binanceSymbol: eurUsdcBinance ? 'EURUSDC' : 'EURUSDT',
       price: eurUsdPrice,
       currency: 'USD',
       lastUpdate: timestamp,
@@ -252,7 +209,7 @@ export async function getMarketSnapshot(): Promise<MarketSnapshot> {
       source: 'derived',
     },
     timestamp: now,
-    source: sourceLabel || 'binance+coingecko',
+    source: sourceLabel,
   };
 }
 

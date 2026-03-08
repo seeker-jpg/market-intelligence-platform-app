@@ -144,7 +144,7 @@ export default function MarketsPage() {
                   'text-[10px] px-1.5 py-0.5 rounded font-mono',
                   marketData?.goldSource === 'binance' ? 'bg-[var(--warning)]/15 text-[var(--warning)]' : 'bg-muted text-muted-foreground'
                 )}>
-                  {marketData?.goldSource === 'binance' ? 'Binance' : marketData?.goldSource === 'coingecko' ? 'CoinGecko' : 'N/A'}
+                  {marketData?.goldSource === 'binance' ? 'Binance' : 'N/A'}
                 </span>
               </div>
             </div>
@@ -166,9 +166,9 @@ export default function MarketsPage() {
                 <Radio className="h-5 w-5 text-muted-foreground" />
                 <span className={cn(
                   'text-[10px] px-1.5 py-0.5 rounded font-mono',
-                  marketData?.silverSource === 'coingecko' ? 'bg-blue-500/15 text-blue-400' : 'bg-muted text-muted-foreground'
+                  marketData?.silverSource === 'yahoo' ? 'bg-blue-500/15 text-blue-400' : 'bg-muted text-muted-foreground'
                 )}>
-                  {marketData?.silverSource === 'coingecko' ? 'CoinGecko' : 'Dérivé'}
+                  {marketData?.silverSource === 'yahoo' ? 'Yahoo (SI=F)' : 'Dérivé'}
                 </span>
               </div>
             </div>
@@ -192,7 +192,7 @@ export default function MarketsPage() {
                   'text-[10px] px-1.5 py-0.5 rounded font-mono',
                   marketData?.eurSource === 'binance' ? 'bg-[var(--warning)]/15 text-[var(--warning)]' : 'bg-blue-500/15 text-blue-400'
                 )}>
-                  {marketData?.eurSource === 'binance' ? 'Binance' : marketData?.eurSource === 'coingecko' ? 'CoinGecko' : 'N/A'}
+                  {marketData?.eurSource === 'binance' ? 'Binance' : marketData?.eurSource === 'yahoo' ? 'Yahoo' : 'N/A'}
                 </span>
               </div>
             </div>
@@ -414,13 +414,13 @@ export default function MarketsPage() {
               </div>
               <div className="bg-surface-2 rounded p-3 border border-border/50">
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-sm font-medium">CoinGecko</span>
+                  <span className="text-sm font-medium">Yahoo Finance</span>
                   <Badge variant="outline" className="text-[10px] border-blue-400/50 text-blue-400">
-                    silver
+                    SI=F
                   </Badge>
                 </div>
-                <p className="text-xs text-muted-foreground">Argent (XAG) – prix spot USD</p>
-                <p className="text-xs text-muted-foreground">Fallback EUR/USD si Binance KO</p>
+                <p className="text-xs text-muted-foreground">Argent (XAG) – futures continus</p>
+                <p className="text-xs text-muted-foreground">Fallback EUR/USD (EURUSD=X) si Binance KO</p>
               </div>
               <div className="bg-surface-2 rounded p-3 border border-border/50">
                 <div className="flex items-center justify-between mb-1">
