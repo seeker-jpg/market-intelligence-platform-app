@@ -184,12 +184,12 @@ export function MarketStatus({ className, showDetails = false, compact = false }
             </div>
           </div>
 
-          {/* CoinGecko Status */}
+          {/* Yahoo Finance Status */}
           <div className="flex items-center justify-between">
-            <span className="text-sm">CoinGecko</span>
+            <span className="text-sm">Yahoo Finance</span>
             <div className="flex items-center gap-1.5">
               <CheckCircle className="h-3.5 w-3.5 text-[var(--positive)]" />
-              <span className="text-xs font-medium text-[var(--positive)]">24/7</span>
+              <span className="text-xs font-medium text-[var(--positive)]">XAG / SI=F</span>
             </div>
           </div>
         </div>

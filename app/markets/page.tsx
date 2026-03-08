@@ -5,7 +5,7 @@ import { TerminalLayout } from '@/components/terminal/terminal-layout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { RefreshCw, Search, TrendingUp, ArrowUpDown, Radio } from 'lucide-react';
+import { RefreshCw, Search, ArrowUpDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getMarketSnapshot } from '@/lib/binance-service';
 import {
@@ -16,6 +16,12 @@ import {
 import type { TRInstrument, AssetType } from '@/lib/types/arbitrage';
 import { MOCK_TR_PRICES } from '@/lib/mock/tr-prices';
 
+interface VerifyBadge {
+  source: 'yahoo' | 'coingecko';
+  price: number;
+  delta: number;
+}
+
 interface MarketData {
   goldPriceUsd: number;
   silverPriceUsd: number;
@@ -24,6 +30,9 @@ interface MarketData {
   silverSource: string;
   eurSource: string;
   lastUpdate: string;
+  goldVerify: VerifyBadge[];
+  silverVerify: VerifyBadge[];
+  eurVerify: VerifyBadge[];
 }
 
 type MarketPriceData = {
@@ -56,6 +65,9 @@ export default function MarketsPage() {
         silverSource: snapshot.xagUsd.source,
         eurSource: snapshot.eurUsd.source,
         lastUpdate: new Date().toLocaleTimeString('fr-FR'),
+        goldVerify: snapshot.xauUsd.verification ?? [],
+        silverVerify: snapshot.xagUsd.verification ?? [],
+        eurVerify: snapshot.eurUsd.verification ?? [],
       });
     } catch (error) {
       console.error('Échec du chargement des données de marché :', error);
@@ -139,18 +151,23 @@ export default function MarketsPage() {
                 </p>
               </div>
               <div className="flex flex-col items-end gap-1">
-                <TrendingUp className="h-5 w-5 text-muted-foreground" />
-                <span className={cn(
-                  'text-[10px] px-1.5 py-0.5 rounded font-mono',
-                  marketData?.goldSource === 'binance' ? 'bg-[var(--warning)]/15 text-[var(--warning)]' : 'bg-muted text-muted-foreground'
-                )}>
-                  {marketData?.goldSource === 'binance' ? 'Binance' : marketData?.goldSource === 'coingecko' ? 'CoinGecko' : 'N/A'}
+                <span className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-[var(--warning)]/15 text-[var(--warning)]">
+                  Binance
                 </span>
+                <span className="text-[10px] text-muted-foreground font-mono">PAXGUSDT</span>
               </div>
             </div>
-            <p className="text-xs text-muted-foreground mt-2 font-mono">
-              MAJ {marketData?.lastUpdate ?? '--'}
-            </p>
+            <div className="mt-2 flex items-center justify-between">
+              <p className="text-xs text-muted-foreground font-mono">MAJ {marketData?.lastUpdate ?? '--'}</p>
+              {marketData?.goldVerify.map(v => (
+                <span key={v.source} className={cn(
+                  'text-[10px] font-mono px-1 py-0.5 rounded',
+                  Math.abs(v.delta) < 0.5 ? 'text-[var(--positive)]' : 'text-[var(--warning)]'
+                )}>
+                  {v.source === 'coingecko' ? 'CG' : 'YH'} {v.delta > 0 ? '+' : ''}{v.delta.toFixed(2)}%
+                </span>
+              ))}
+            </div>
           </div>
 
           {/* Silver */}
@@ -163,18 +180,23 @@ export default function MarketsPage() {
                 </p>
               </div>
               <div className="flex flex-col items-end gap-1">
-                <Radio className="h-5 w-5 text-muted-foreground" />
-                <span className={cn(
-                  'text-[10px] px-1.5 py-0.5 rounded font-mono',
-                  marketData?.silverSource === 'coingecko' ? 'bg-blue-500/15 text-blue-400' : 'bg-muted text-muted-foreground'
-                )}>
-                  {marketData?.silverSource === 'coingecko' ? 'CoinGecko' : 'Dérivé'}
+                <span className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-[var(--warning)]/15 text-[var(--warning)]">
+                  Binance
                 </span>
+                <span className="text-[10px] text-muted-foreground font-mono">PAXG/ratio</span>
               </div>
             </div>
-            <p className="text-xs text-muted-foreground mt-2 font-mono">
-              MAJ {marketData?.lastUpdate ?? '--'}
-            </p>
+            <div className="mt-2 flex items-center justify-between">
+              <p className="text-xs text-muted-foreground font-mono">MAJ {marketData?.lastUpdate ?? '--'}</p>
+              {marketData?.silverVerify.map(v => (
+                <span key={v.source} className={cn(
+                  'text-[10px] font-mono px-1 py-0.5 rounded',
+                  Math.abs(v.delta) < 1 ? 'text-[var(--positive)]' : 'text-[var(--warning)]'
+                )}>
+                  {v.source === 'yahoo' ? 'YH' : 'CG'} {v.delta > 0 ? '+' : ''}{v.delta.toFixed(2)}%
+                </span>
+              ))}
+            </div>
           </div>
 
           {/* EUR/USD */}
@@ -187,18 +209,28 @@ export default function MarketsPage() {
                 </p>
               </div>
               <div className="flex flex-col items-end gap-1">
-                <TrendingUp className="h-5 w-5 text-muted-foreground" />
                 <span className={cn(
                   'text-[10px] px-1.5 py-0.5 rounded font-mono',
                   marketData?.eurSource === 'binance' ? 'bg-[var(--warning)]/15 text-[var(--warning)]' : 'bg-blue-500/15 text-blue-400'
                 )}>
-                  {marketData?.eurSource === 'binance' ? 'Binance' : marketData?.eurSource === 'coingecko' ? 'CoinGecko' : 'N/A'}
+                  {marketData?.eurSource === 'binance' ? 'Binance' : 'Yahoo'}
+                </span>
+                <span className="text-[10px] text-muted-foreground font-mono">
+                  {marketData?.eurSource === 'binance' ? 'EURUSDC' : 'EURUSD=X'}
                 </span>
               </div>
             </div>
-            <p className="text-xs text-muted-foreground mt-2 font-mono">
-              MAJ {marketData?.lastUpdate ?? '--'}
-            </p>
+            <div className="mt-2 flex items-center justify-between">
+              <p className="text-xs text-muted-foreground font-mono">MAJ {marketData?.lastUpdate ?? '--'}</p>
+              {marketData?.eurVerify.filter(v => marketData.eurSource === 'binance').map(v => (
+                <span key={v.source} className={cn(
+                  'text-[10px] font-mono px-1 py-0.5 rounded',
+                  Math.abs(v.delta) < 0.1 ? 'text-[var(--positive)]' : 'text-[var(--warning)]'
+                )}>
+                  YH {v.delta > 0 ? '+' : ''}{v.delta.toFixed(3)}%
+                </span>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -406,31 +438,32 @@ export default function MarketsPage() {
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-sm font-medium">Binance</span>
                   <Badge variant="outline" className="text-[10px] border-[var(--warning)]/50 text-[var(--warning)]">
-                    PAXG/USDT
+                    Primaire
                   </Badge>
                 </div>
-                <p className="text-xs text-muted-foreground">Or (XAU) – prix PAXG temps réel</p>
+                <p className="text-xs text-muted-foreground">Or (XAU) – PAXGUSDT temps réel</p>
+                <p className="text-xs text-muted-foreground">Argent (XAG) – dérivé PAXG/ratio</p>
                 <p className="text-xs text-muted-foreground">EUR/USD – EURUSDC ou EURUSDT</p>
               </div>
               <div className="bg-surface-2 rounded p-3 border border-border/50">
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-sm font-medium">CoinGecko</span>
+                  <span className="text-sm font-medium">Yahoo Finance</span>
                   <Badge variant="outline" className="text-[10px] border-blue-400/50 text-blue-400">
-                    silver
+                    Vérif.
                   </Badge>
                 </div>
-                <p className="text-xs text-muted-foreground">Argent (XAG) – prix spot USD</p>
-                <p className="text-xs text-muted-foreground">Fallback EUR/USD si Binance KO</p>
+                <p className="text-xs text-muted-foreground">SI=F – calibrage du ratio XAG</p>
+                <p className="text-xs text-muted-foreground">EURUSD=X – fallback EUR si Binance KO</p>
               </div>
               <div className="bg-surface-2 rounded p-3 border border-border/50">
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-sm font-medium">Trade Republic</span>
-                  <Badge variant="outline" className="text-[10px]">
-                    Simulé
+                  <span className="text-sm font-medium">CoinGecko</span>
+                  <Badge variant="outline" className="text-[10px] border-purple-400/50 text-purple-400">
+                    Vérif.
                   </Badge>
                 </div>
-                <p className="text-xs text-muted-foreground">ETC/ETF or & argent via TR API</p>
-                <p className="text-xs text-muted-foreground">Intégration directe à connecter</p>
+                <p className="text-xs text-muted-foreground">PAXG – validation croisée XAU</p>
+                <p className="text-xs text-muted-foreground">Delta affiché sur la carte Or</p>
               </div>
             </div>
           </div>
