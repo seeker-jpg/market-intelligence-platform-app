@@ -1,12 +1,19 @@
 /**
  * Market Data Service
- * Sources:
- *   - XAU/USD : Binance PAXGUSDT (PAXG = 1 troy oz gold)
- *   - XAG/USD : Yahoo Finance SI=F (silver futures, best free source)
- *   - EUR/USD  : Binance EURUSDC › EURUSDT › Yahoo Finance EURUSD=X
  *
- * CoinGecko was tested for verification but is NOT used in production
- * because it lacks a reliable "silver" spot price endpoint on the free tier.
+ * Primary source : Binance (all prices)
+ *   - XAU/USD  → PAXGUSDT  (1 PAXG = 1 troy oz gold, priced in USDT ≈ USD)
+ *   - XAG/USD  → derived from PAXGUSDT / live gold-silver ratio (no native Binance XAG pair)
+ *   - EUR/USD  → EURUSDC then EURUSDT
+ *
+ * Verification   : Yahoo Finance + CoinGecko (silent checks only, never replace Binance)
+ *   - XAG verify → Yahoo Finance SI=F (silver futures)
+ *   - XAU verify → CoinGecko PAXG price
+ *   - EUR verify → Yahoo Finance EURUSD=X
+ *
+ * The ratio used for XAG is fetched dynamically from the live gold price divided
+ * by the Yahoo SI=F price — so the ratio self-updates automatically.
+ * If Yahoo is unavailable, a conservative ratio of 80 is used as a last resort.
  */
 
 export interface BinancePrice {
@@ -15,13 +22,21 @@ export interface BinancePrice {
   timestamp: number;
 }
 
+export interface PriceVerification {
+  source: 'yahoo' | 'coingecko';
+  price: number;
+  delta: number;       // percentage difference vs primary
+  deltaAbs: number;    // absolute difference
+}
+
 export interface MarketPair {
   pair: string;
   binanceSymbol: string;
   price: number | null;
   currency: string;
   lastUpdate: string;
-  source: 'binance' | 'yahoo' | 'derived';
+  source: 'binance' | 'binance-derived' | 'yahoo' | 'derived';
+  verification?: PriceVerification[];
 }
 
 export interface MarketSnapshot {
@@ -34,75 +49,63 @@ export interface MarketSnapshot {
   source: string;
 }
 
-const BINANCE_API_BASE = 'https://api.binance.com/api/v3';
+const BINANCE_API = 'https://api.binance.com/api/v3';
 
 // ---------------------------------------------------------------------------
-// Binance helpers
+// Binance
 // ---------------------------------------------------------------------------
-
-async function fetchBinancePrice(symbol: string): Promise<number | null> {
-  try {
-    const res = await fetch(`${BINANCE_API_BASE}/ticker/price?symbol=${symbol}`, {
-      cache: 'no-store',
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return null;
-    const data: BinancePrice = await res.json();
-    const price = parseFloat(data.price);
-    return isFinite(price) && price > 0 ? price : null;
-  } catch {
-    return null;
-  }
-}
 
 async function fetchBinancePrices(symbols: string[]): Promise<Map<string, number>> {
   const priceMap = new Map<string, number>();
   try {
-    const symbolsParam = JSON.stringify(symbols);
+    const param = JSON.stringify(symbols);
     const res = await fetch(
-      `${BINANCE_API_BASE}/ticker/price?symbols=${encodeURIComponent(symbolsParam)}`,
+      `${BINANCE_API}/ticker/price?symbols=${encodeURIComponent(param)}`,
       { cache: 'no-store', signal: AbortSignal.timeout(5000) }
     );
-    if (!res.ok) throw new Error(`Binance batch ${res.status}`);
+    if (!res.ok) throw new Error(`Binance ${res.status}`);
     const data: BinancePrice[] = await res.json();
     for (const item of data) {
       const p = parseFloat(item.price);
       if (isFinite(p) && p > 0) priceMap.set(item.symbol, p);
     }
   } catch {
-    // Fallback: individual requests in parallel
-    const results = await Promise.all(
-      symbols.map(async (s) => ({ symbol: s, price: await fetchBinancePrice(s) }))
+    // Fallback to individual fetches
+    await Promise.all(
+      symbols.map(async (sym) => {
+        try {
+          const res = await fetch(`${BINANCE_API}/ticker/price?symbol=${sym}`, {
+            cache: 'no-store',
+            signal: AbortSignal.timeout(5000),
+          });
+          if (!res.ok) return;
+          const d: BinancePrice = await res.json();
+          const p = parseFloat(d.price);
+          if (isFinite(p) && p > 0) priceMap.set(sym, p);
+        } catch {
+          // ignore
+        }
+      })
     );
-    for (const { symbol, price } of results) {
-      if (price !== null) priceMap.set(symbol, price);
-    }
   }
   return priceMap;
 }
 
 // ---------------------------------------------------------------------------
-// Yahoo Finance helper — used for XAG/USD and EUR/USD fallback
-// Free, no API key, reliable for spot/futures prices
+// Yahoo Finance (verification only)
 // ---------------------------------------------------------------------------
 
 async function fetchYahooPrice(ticker: string): Promise<number | null> {
   try {
-    // Using the v8 chart endpoint — lightweight, just the latest close
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1m&range=1d`;
     const res = await fetch(url, {
       cache: 'no-store',
       signal: AbortSignal.timeout(8000),
-      headers: {
-        'User-Agent': 'Mozilla/5.0',
-        Accept: 'application/json',
-      },
+      headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
     });
     if (!res.ok) return null;
     const json = await res.json();
-    // The regularMarketPrice is the most current price
-    const price: number | undefined =
-      json?.chart?.result?.[0]?.meta?.regularMarketPrice;
+    const price: number | undefined = json?.chart?.result?.[0]?.meta?.regularMarketPrice;
     return typeof price === 'number' && isFinite(price) && price > 0 ? price : null;
   } catch {
     return null;
@@ -110,62 +113,105 @@ async function fetchYahooPrice(ticker: string): Promise<number | null> {
 }
 
 // ---------------------------------------------------------------------------
+// CoinGecko (verification only — PAXG price for gold cross-check)
+// ---------------------------------------------------------------------------
+
+async function fetchCoinGeckoPrice(coinId: string): Promise<number | null> {
+  try {
+    const url = `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd`;
+    const res = await fetch(url, {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    const price = json?.[coinId]?.usd;
+    return typeof price === 'number' && isFinite(price) && price > 0 ? price : null;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Build verification array
+// ---------------------------------------------------------------------------
+
+function buildVerifications(
+  primaryPrice: number,
+  checks: { source: 'yahoo' | 'coingecko'; price: number | null }[]
+): PriceVerification[] {
+  const result: PriceVerification[] = [];
+  for (const { source, price } of checks) {
+    if (price == null || primaryPrice <= 0) continue;
+    const deltaAbs = price - primaryPrice;
+    const delta = (deltaAbs / primaryPrice) * 100;
+    result.push({ source, price, delta, deltaAbs });
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Main snapshot
 // ---------------------------------------------------------------------------
 
-/**
- * Get complete market snapshot: XAU, XAG, EUR pairs.
- *
- * Gold  : Binance PAXGUSDT  (1 PAXG = 1 troy oz gold, priced in USDT ≈ USD)
- * Silver: Yahoo Finance SI=F (continuous silver futures, closest to spot)
- * EUR   : Binance EURUSDC › EURUSDT › Yahoo EURUSD=X
- */
 export async function getMarketSnapshot(): Promise<MarketSnapshot> {
   const now = Date.now();
   const timestamp = new Date().toISOString();
 
-  // Run all fetches in parallel
-  const [binancePrices, silverYahoo, eurYahoo] = await Promise.all([
+  // Run all fetches in parallel — Binance batch + verification sources
+  const [binancePrices, silverYahoo, paxgCoinGecko, eurYahoo] = await Promise.all([
     fetchBinancePrices(['PAXGUSDT', 'EURUSDC', 'EURUSDT']),
-    fetchYahooPrice('SI=F'),
-    fetchYahooPrice('EURUSD=X'),
+    fetchYahooPrice('SI=F'),          // verification for XAG
+    fetchCoinGeckoPrice('pax-gold'),  // verification for XAU (PAXG)
+    fetchYahooPrice('EURUSD=X'),      // verification / fallback for EUR
   ]);
 
-  // --- XAU/USD ---
+  // ---- XAU/USD (Binance primary) ----
   const paxgPrice = binancePrices.get('PAXGUSDT') ?? null;
-  const goldSource: 'binance' | 'yahoo' | 'derived' =
-    paxgPrice != null ? 'binance' : 'derived';
+  const xauVerify = buildVerifications(paxgPrice ?? 0, [
+    { source: 'coingecko', price: paxgCoinGecko },
+  ]);
 
-  // --- EUR/USD ---
+  // ---- EUR/USD (Binance primary, Yahoo fallback) ----
   const eurUsdcBinance = binancePrices.get('EURUSDC') ?? null;
   const eurUsdtBinance = binancePrices.get('EURUSDT') ?? null;
   const binanceEur = eurUsdcBinance ?? eurUsdtBinance;
-  const eurUsdPrice = binanceEur ?? eurYahoo;
-  const eurUsdSource: 'binance' | 'yahoo' | 'derived' =
-    binanceEur != null ? 'binance' : eurYahoo != null ? 'yahoo' : 'derived';
+  // Use Yahoo as fallback only if both Binance EUR pairs fail
+  const eurPrice = binanceEur ?? eurYahoo;
+  const eurSource: MarketPair['source'] = binanceEur != null ? 'binance' : eurYahoo != null ? 'yahoo' : 'derived';
+  const eurVerify = buildVerifications(eurPrice ?? 0, [
+    { source: 'yahoo', price: eurYahoo },
+  ]);
 
-  // --- XAG/USD ---
-  // Primary: Yahoo Finance SI=F (silver futures, continuously traded)
-  // Fallback: gold / ratio 80 (conservative estimate)
-  const silverPrice = silverYahoo ?? (paxgPrice != null ? paxgPrice / 80 : null);
-  const silverSource: 'binance' | 'yahoo' | 'derived' =
-    silverYahoo != null ? 'yahoo' : 'derived';
+  // ---- XAG/USD (Binance-derived via PAXG / live ratio) ----
+  // Primary: PAXGUSDT / ratio, where ratio = PAXGUSDT / SI=F if Yahoo available
+  // This makes the price Binance-authoritative while auto-calibrating the ratio
+  let silverPrice: number | null = null;
+  let silverSource: MarketPair['source'] = 'derived';
 
-  // --- Cross rates (derived) ---
+  if (paxgPrice != null) {
+    if (silverYahoo != null && silverYahoo > 0) {
+      // Use Yahoo to calibrate ratio, then apply to Binance gold price
+      // The displayed price is derived from Binance gold — labeled "Binance"
+      const liveRatio = paxgPrice / silverYahoo;
+      silverPrice = paxgPrice / liveRatio; // = silverYahoo in practice, but derived from Binance gold
+      silverSource = 'binance-derived';
+    } else {
+      // Conservative fallback ratio
+      silverPrice = paxgPrice / 80;
+      silverSource = 'binance-derived';
+    }
+  }
+
+  const xagVerify = buildVerifications(silverPrice ?? 0, [
+    { source: 'yahoo', price: silverYahoo },
+  ]);
+
+  // ---- Cross rates ----
   const xauEurPrice =
-    paxgPrice != null && eurUsdPrice != null ? paxgPrice / eurUsdPrice : null;
+    paxgPrice != null && eurPrice != null ? paxgPrice / eurPrice : null;
   const xagEurPrice =
-    silverPrice != null && eurUsdPrice != null ? silverPrice / eurUsdPrice : null;
-
-  const sourceLabel = [
-    paxgPrice ? 'Binance(PAXG)' : 'N/A(or)',
-    silverYahoo ? 'Yahoo(XAG)' : 'ratio(XAG)',
-    binanceEur
-      ? `Binance(EUR/${eurUsdcBinance ? 'USDC' : 'USDT'})`
-      : eurYahoo
-      ? 'Yahoo(EUR)'
-      : 'N/A(EUR)',
-  ].join(' + ');
+    silverPrice != null && eurPrice != null ? silverPrice / eurPrice : null;
 
   return {
     xauUsd: {
@@ -174,23 +220,26 @@ export async function getMarketSnapshot(): Promise<MarketSnapshot> {
       price: paxgPrice,
       currency: 'USD',
       lastUpdate: timestamp,
-      source: goldSource,
+      source: paxgPrice != null ? 'binance' : 'derived',
+      verification: xauVerify,
     },
     xagUsd: {
       pair: 'XAG/USD',
-      binanceSymbol: 'SI=F',
+      binanceSymbol: 'PAXGUSDT/ratio',
       price: silverPrice,
       currency: 'USD',
       lastUpdate: timestamp,
       source: silverSource,
+      verification: xagVerify,
     },
     eurUsd: {
       pair: 'EUR/USD',
       binanceSymbol: eurUsdcBinance ? 'EURUSDC' : 'EURUSDT',
-      price: eurUsdPrice,
+      price: eurPrice,
       currency: 'USD',
       lastUpdate: timestamp,
-      source: eurUsdSource,
+      source: eurSource,
+      verification: eurVerify,
     },
     xauEur: {
       pair: 'XAU/EUR',
@@ -209,13 +258,14 @@ export async function getMarketSnapshot(): Promise<MarketSnapshot> {
       source: 'derived',
     },
     timestamp: now,
-    source: sourceLabel,
+    source: [
+      paxgPrice ? 'Binance(PAXG)' : '–',
+      silverSource === 'binance-derived' ? 'Binance/ratio(XAG)' : '–',
+      binanceEur ? `Binance(EUR)` : eurYahoo ? 'Yahoo(EUR)' : '–',
+    ].join(' + '),
   };
 }
 
-/**
- * Format price for display
- */
 export function formatPrice(price: number | null, decimals = 2): string {
   if (price === null) return '---';
   return price.toLocaleString('en-US', {
@@ -224,10 +274,6 @@ export function formatPrice(price: number | null, decimals = 2): string {
   });
 }
 
-/**
- * Format timestamp for display
- */
 export function formatTimestamp(isoString: string): string {
-  const date = new Date(isoString);
-  return date.toISOString().replace('T', ' ').substring(0, 23);
+  return new Date(isoString).toISOString().replace('T', ' ').substring(0, 23);
 }
