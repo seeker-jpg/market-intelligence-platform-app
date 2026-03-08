@@ -23,6 +23,21 @@ import {
 import { cn } from '@/lib/utils';
 import type { AssetType, TradingSignal } from '@/lib/types/arbitrage';
 
+const FR_MONTHS_SHORT = ['jan.', 'fév.', 'mar.', 'avr.', 'mai', 'jun.', 'jul.', 'aoû.', 'sep.', 'oct.', 'nov.', 'déc.'];
+
+/** Format a date using UTC fields — identical on server and client regardless of timezone */
+function fmtDateUTC(d: Date): string {
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  const month = FR_MONTHS_SHORT[d.getUTCMonth()];
+  return `${day} ${month}`;
+}
+
+function fmtTimeUTC(d: Date): string {
+  const h = String(d.getUTCHours()).padStart(2, '0');
+  const m = String(d.getUTCMinutes()).padStart(2, '0');
+  return `${h}:${m}`;
+}
+
 // Deterministic LCG pseudo-random number generator — avoids SSR/client hydration mismatch
 function createRng(seed: number) {
   let s = seed;
@@ -164,8 +179,8 @@ export default function HistoryPage() {
     const rows = filteredSignals.map(s => {
       const date = new Date(s.timestamp);
       return [
-        date.toLocaleDateString(),
-        date.toLocaleTimeString(),
+          fmtDateUTC(date),
+          fmtTimeUTC(date),
         s.assetType,
         s.instrumentName,
         s.signalType,
@@ -345,10 +360,10 @@ export default function HistoryPage() {
                     >
                       <td className="p-3">
                         <div className="font-mono text-sm">
-                          {date.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })}
+                          {fmtDateUTC(date)}
                         </div>
                         <div className="font-mono text-xs text-muted-foreground">
-                          {date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                          {fmtTimeUTC(date)}
                         </div>
                       </td>
                       <td className="p-3">
