@@ -1,17 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getMarketSnapshot } from '@/lib/binance-service';
-import { 
-  TR_GOLD_INSTRUMENTS, 
+import { getETFSnapshot } from '@/lib/etf-data';
+import {
+  TR_GOLD_INSTRUMENTS,
   TR_SILVER_INSTRUMENTS,
-  TROY_OUNCE_GRAMS,
   GOLD_SILVER_RATIO,
 } from '@/lib/config/instruments';
 import { calculateInstrumentSpread } from '@/lib/engine/arbitrage-engine';
 import { getActiveSignals } from '@/lib/engine/signal-engine';
-import type { SpreadResult } from '@/lib/types/arbitrage';
 import { MOCK_TR_PRICES } from '@/lib/mock/tr-prices';
 
-function escapeCSV(value: string | number | boolean | null | undefined): string {
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
+function esc(value: string | number | boolean | null | undefined): string {
   if (value === null || value === undefined) return '';
   const str = String(value);
   if (str.includes(',') || str.includes('"') || str.includes('\n')) {
@@ -20,174 +22,156 @@ function escapeCSV(value: string | number | boolean | null | undefined): string 
   return str;
 }
 
-function spreadsToCSV(spreads: SpreadResult[]): string {
-  const headers = [
-    'ISIN',
-    'Nom',
-    "Type d'actif",
-    'Prix TR',
-    'Bid TR',
-    'Ask TR',
-    'Prix Binance',
-    'Ecart %',
-    'Ecart BPS',
-    'Z-Score',
-    'Confiance',
-    'Devise',
-    'Taux FX',
-    'Marche comparable',
-    'Horodatage',
-  ];
-  
-  const rows = spreads.map(s => [
-    s.trInstrument.isin,
-    s.trInstrument.name,
-    s.assetType,
-    s.trPrice.toFixed(4),
-    s.trBid?.toFixed(4) || '',
-    s.trAsk?.toFixed(4) || '',
-    s.binancePrice.toFixed(4),
-    s.spreadPct.toFixed(4),
-    s.spreadBps.toFixed(2),
-    s.zScore.toFixed(4),
-    s.confidence,
-    s.currency,
-    s.fxRate?.toFixed(6) || '',
-    s.marketHoursComparable ? 'Oui' : 'Non',
-    s.timestamp,
-  ].map(escapeCSV).join(','));
-  
-  return [headers.join(','), ...rows].join('\n');
+function row(...values: (string | number | boolean | null | undefined)[]): string {
+  return values.map(esc).join(',');
 }
 
+/**
+ * GET /api/export/csv
+ * Returns a real .csv file containing the selected data sections.
+ *
+ * Query params:
+ *   include=markets,etfs,arbitrage,signals  (default: all)
+ */
 export async function GET(request: NextRequest) {
+  const searchParams = request.nextUrl.searchParams;
+  const includeParam = searchParams.get('include') || 'markets,etfs,arbitrage,signals';
+  const includes = includeParam.split(',').map(s => s.trim().toLowerCase());
+
   try {
-    const searchParams = request.nextUrl.searchParams;
-    const dataType = searchParams.get('type') || 'spreads'; // spreads, signals, all
-    const assetType = searchParams.get('assetType'); // GOLD, SILVER, or null for both
-    
-    // Fetch current data
+    const timestamp = new Date().toISOString();
+    const dateLabel = new Date().toLocaleString('fr-FR', { timeZone: 'Europe/Paris' });
+    const lines: string[] = [];
+
     const snapshot = await getMarketSnapshot();
-    const paxgPrice = snapshot.xauUsd.price || 2650;
-    const eurUsd = snapshot.eurUsd.price || 1.08;
-    const silverPriceUsd = paxgPrice / GOLD_SILVER_RATIO.default;
-    
-    // Calculate spreads
-    const goldSpreads: SpreadResult[] = [];
-    const silverSpreads: SpreadResult[] = [];
-    
-    for (const instrument of TR_GOLD_INSTRUMENTS) {
-      const trData = MOCK_TR_PRICES[instrument.isin];
-      if (trData) {
-        const spread = calculateInstrumentSpread(
-          instrument,
-          trData.price,
-          trData.bid,
-          trData.ask,
-          paxgPrice,
-          eurUsd
-        );
-        goldSpreads.push(spread);
-      }
+    const paxgPrice = snapshot.xauUsd.price ?? 2650;
+    const eurUsd = snapshot.eurUsd.price ?? 1.08;
+    const silverPriceUsd = snapshot.xagUsd.price || paxgPrice / GOLD_SILVER_RATIO.default;
+
+    lines.push('# Market Intelligence Platform — Export CSV');
+    lines.push(`# Genere le: ${dateLabel}`);
+    lines.push(`# Source primaire: Binance`);
+    lines.push('');
+
+    // ── Markets ──────────────────────────────────────────────────────────
+    if (includes.includes('markets')) {
+      lines.push('## MARCHES (Binance)');
+      lines.push(row('Paire', 'Prix USD', 'Source', 'Methode', 'Horodatage'));
+      lines.push(row('XAU/USD', paxgPrice, snapshot.xauUsd.source, 'PAXGUSDT spot', timestamp));
+      lines.push(row('XAG/USD', silverPriceUsd, snapshot.xagUsd.source, 'PAXG/ratio', timestamp));
+      lines.push(row('EUR/USD', eurUsd, snapshot.eurUsd.source, 'EURUSDC spot', timestamp));
+      lines.push(row('XAU/EUR', paxgPrice / eurUsd, 'calcule', 'XAU/USD / EUR/USD', timestamp));
+      lines.push(row('XAG/EUR', silverPriceUsd / eurUsd, 'calcule', 'XAG/USD / EUR/USD', timestamp));
+      lines.push('');
     }
-    
-    for (const instrument of TR_SILVER_INSTRUMENTS) {
-      const trData = MOCK_TR_PRICES[instrument.isin];
-      if (trData) {
-        const pricePerGram = silverPriceUsd / TROY_OUNCE_GRAMS;
-        let normalizedPrice = pricePerGram * (instrument.gramPerUnit || 1);
-        if (instrument.currency === 'EUR') {
-          normalizedPrice = normalizedPrice / eurUsd;
+
+    // ── ETFs ──────────────────────────────────────────────────────────────
+    if (includes.includes('etfs')) {
+      const etfSnapshot = getETFSnapshot();
+      lines.push('## ETFs / ETCs (Trade Republic)');
+      lines.push(row('ISIN', 'Nom', 'Symbole', 'Bid', 'Ask', 'Dernier', 'Spread', 'Spread%', 'Devise'));
+      for (const etf of etfSnapshot.etfs) {
+        lines.push(row(
+          etf.isin, etf.name, etf.symbol,
+          etf.bid, etf.ask, etf.last,
+          etf.spread, etf.spreadPercent, etf.currency,
+        ));
+      }
+      lines.push('');
+    }
+
+    // ── Arbitrage ─────────────────────────────────────────────────────────
+    if (includes.includes('arbitrage')) {
+      lines.push('## ARBITRAGE (TR vs Binance)');
+      lines.push(row(
+        'ISIN', 'Nom', 'Actif', 'Prix TR', 'Bid TR', 'Ask TR',
+        'Prix Binance', 'Ecart%', 'Ecart BPS', 'Z-Score',
+        'Confiance', 'Devise', 'Taux FX', 'Horodatage',
+      ));
+
+      for (const instrument of TR_GOLD_INSTRUMENTS) {
+        const trData = MOCK_TR_PRICES[instrument.isin];
+        if (trData) {
+          const s = calculateInstrumentSpread(
+            instrument, trData.price, trData.bid, trData.ask, paxgPrice, eurUsd,
+          );
+          lines.push(row(
+            s.trInstrument.isin, s.trInstrument.name, 'OR',
+            s.trPrice, s.trBid ?? '', s.trAsk ?? '',
+            s.binancePrice, s.spreadPct, s.spreadBps,
+            s.zScore, s.confidence, s.currency, s.fxRate ?? '', s.timestamp,
+          ));
         }
-        
-        const spread: SpreadResult = {
-          id: `${instrument.isin}-${Date.now()}`,
-          assetType: 'SILVER',
-          trInstrument: instrument,
-          binanceSymbol: 'SILVER_PROXY',
-          trPrice: trData.price,
-          trBid: trData.bid,
-          trAsk: trData.ask,
-          binancePrice: normalizedPrice,
-          spreadAbs: trData.price - normalizedPrice,
-          spreadPct: ((trData.price - normalizedPrice) / normalizedPrice) * 100,
-          spreadBps: ((trData.price - normalizedPrice) / normalizedPrice) * 10000,
-          zScore: 0,
-          historicalMean: 0,
-          historicalStdDev: 0.5,
-          confidence: 'MEDIUM',
-          currency: instrument.currency,
-          fxRate: eurUsd,
-          timestamp: new Date().toISOString(),
-          marketHoursComparable: true,
-          trMarketState: 'OPEN',
-          binanceMarketState: 'OPEN',
-          isStale: false,
-        };
-        silverSpreads.push(spread);
       }
+
+      for (const instrument of TR_SILVER_INSTRUMENTS) {
+        const trData = MOCK_TR_PRICES[instrument.isin];
+        if (trData) {
+          const normalizedBinance =
+            instrument.currency === 'EUR'
+              ? (silverPriceUsd / eurUsd) * (instrument.gramPerUnit || 1) / 31.1035
+              : silverPriceUsd * (instrument.gramPerUnit || 1) / 31.1035;
+
+          const spreadPct = ((trData.price - normalizedBinance) / normalizedBinance) * 100;
+          lines.push(row(
+            instrument.isin, instrument.name, 'ARGENT',
+            trData.price, trData.bid ?? '', trData.ask ?? '',
+            normalizedBinance, spreadPct, spreadPct * 100,
+            0, 'MEDIUM', instrument.currency, eurUsd, timestamp,
+          ));
+        }
+      }
+      lines.push('');
     }
-    
-    // Filter by asset type if specified
-    let spreads: SpreadResult[];
-    if (assetType === 'GOLD') {
-      spreads = goldSpreads;
-    } else if (assetType === 'SILVER') {
-      spreads = silverSpreads;
-    } else {
-      spreads = [...goldSpreads, ...silverSpreads];
-    }
-    
-    // Generate CSV
-    let csv = '';
-    const filename = `market_intelligence_${dataType}_${new Date().toISOString().split('T')[0]}.csv`;
-    
-    if (dataType === 'spreads' || dataType === 'all') {
-      csv = spreadsToCSV(spreads);
-    } else if (dataType === 'signals') {
+
+    // ── Signals ───────────────────────────────────────────────────────────
+    if (includes.includes('signals')) {
       const signals = getActiveSignals();
-      const headers = [
-        'ID signal',
-        "Type d'actif",
-        'Instrument',
-        'Type de signal',
-        'Ecart %',
-        'Z-Score',
-        'Confiance',
-        'Priorite',
-        'Statut',
-        'Rationale',
-        'Horodatage',
-      ];
-      const rows = signals.map(s => [
-        s.id,
-        s.assetType,
-        s.instrumentName,
-        s.signalType,
-        s.spreadPct.toFixed(4),
-        s.zScore.toFixed(4),
-        s.confidence,
-        s.priority,
-        s.status,
-        s.rationale,
-        s.timestamp,
-      ].map(escapeCSV).join(','));
-      csv = [headers.join(','), ...rows].join('\n');
+      lines.push('## SIGNAUX DE TRADING');
+      lines.push(row(
+        'ID', 'Actif', 'Instrument', 'Type', 'Ecart%',
+        'Z-Score', 'Confiance', 'Priorite', 'Statut', 'Rationale', 'Horodatage',
+      ));
+      for (const s of signals) {
+        lines.push(row(
+          s.id, s.assetType, s.instrumentName, s.signalType,
+          s.spreadPct, s.zScore, s.confidence, s.priority,
+          s.status, s.rationale, s.timestamp,
+        ));
+      }
+      lines.push('');
     }
-    
-    // Return CSV file
+
+    const csv = lines.join('\r\n');
+    const filename = `market-intelligence-${new Date().toISOString().split('T')[0]}.csv`;
+
     return new NextResponse(csv, {
       status: 200,
       headers: {
-        'Content-Type': 'text/csv',
+        'Content-Type': 'text/csv; charset=utf-8',
         'Content-Disposition': `attachment; filename="${filename}"`,
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
       },
     });
   } catch (error) {
-    console.error('Error exporting CSV:', error);
+    console.error('[API Export CSV] Error:', error);
     return NextResponse.json(
-      { success: false, error: 'Failed to export CSV' },
-      { status: 500 }
+      { error: 'Failed to export CSV', details: error instanceof Error ? error.message : 'Unknown' },
+      { status: 500 },
     );
   }
+}
+
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 204,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    },
+  });
 }
