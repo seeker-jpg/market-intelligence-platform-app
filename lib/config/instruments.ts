@@ -231,6 +231,12 @@ export const DEFAULT_SILVER_THRESHOLDS: Omit<AlertThreshold, 'id' | 'createdAt' 
 
 /**
  * Market hours configuration
+ * 
+ * Lang & Schwarz (LS Exchange): available via Trade Republic, 7:30–23:00 CET Mon–Fri
+ * Tradegate Exchange: 8:00–22:00 CET Mon–Fri (ETCs/ETFs tradeable)
+ * Gettex (Bayerische Börse): 8:00–22:00 CET Mon–Fri
+ * XETRA: 9:00–17:30 CET Mon–Fri (reference market)
+ * Binance: 24/7
  */
 export const MARKET_HOURS_CONFIG = {
   TRADE_REPUBLIC: {
@@ -239,7 +245,35 @@ export const MARKET_HOURS_CONFIG = {
     regularOpen: '07:30',
     regularClose: '23:00',
     tradingDays: [1, 2, 3, 4, 5], // Monday to Friday
-    holidays: [], // Add German holidays
+    holidays: [],
+    notes: 'Disponible via Trade Republic',
+  },
+  LANG_SCHWARZ: {
+    exchange: 'Lang & Schwarz',
+    timezone: 'Europe/Berlin',
+    regularOpen: '07:30',
+    regularClose: '23:00',
+    tradingDays: [1, 2, 3, 4, 5],
+    holidays: [],
+    notes: 'Confirmé disponible sur Trade Republic',
+  },
+  TRADEGATE: {
+    exchange: 'Tradegate Exchange',
+    timezone: 'Europe/Berlin',
+    regularOpen: '08:00',
+    regularClose: '22:00',
+    tradingDays: [1, 2, 3, 4, 5],
+    holidays: [],
+    notes: 'Bourse électronique Berlin / Deutsche Börse – ETCs négociables, à vérifier sur TR',
+  },
+  GETTEX: {
+    exchange: 'Gettex (Bayerische Börse)',
+    timezone: 'Europe/Berlin',
+    regularOpen: '08:00',
+    regularClose: '22:00',
+    tradingDays: [1, 2, 3, 4, 5],
+    holidays: [],
+    notes: 'Bourse de Munich – à vérifier disponibilité sur TR',
   },
   XETRA: {
     exchange: 'XETRA',
@@ -248,6 +282,7 @@ export const MARKET_HOURS_CONFIG = {
     regularClose: '17:30',
     tradingDays: [1, 2, 3, 4, 5],
     holidays: [],
+    notes: 'Marché de référence européen',
   },
   BINANCE: {
     exchange: 'Binance',
@@ -256,8 +291,49 @@ export const MARKET_HOURS_CONFIG = {
     regularClose: '23:59',
     tradingDays: [0, 1, 2, 3, 4, 5, 6], // 24/7
     holidays: [],
+    notes: 'Ouvert 24h/24 7j/7',
   },
 } as const;
+
+/**
+ * German exchanges available via Trade Republic (weekly trading)
+ * Status: confirmed / to-verify based on user research
+ */
+export const GERMAN_EXCHANGES = [
+  {
+    id: 'LANG_SCHWARZ',
+    name: 'Lang & Schwarz',
+    shortName: 'LS Exchange',
+    open: '07:30',
+    close: '23:00',
+    timezone: 'Europe/Berlin',
+    status: 'confirmed' as const,
+    availableOnTR: true,
+    notes: 'Confirmé disponible sur Trade Republic',
+  },
+  {
+    id: 'TRADEGATE',
+    name: 'Tradegate Exchange',
+    shortName: 'Tradegate',
+    open: '08:00',
+    close: '22:00',
+    timezone: 'Europe/Berlin',
+    status: 'to-verify' as const,
+    availableOnTR: null,
+    notes: 'À vérifier sur Trade Republic',
+  },
+  {
+    id: 'GETTEX',
+    name: 'Gettex (Bayerische Börse)',
+    shortName: 'Gettex',
+    open: '08:00',
+    close: '22:00',
+    timezone: 'Europe/Berlin',
+    status: 'to-verify' as const,
+    availableOnTR: null,
+    notes: 'À vérifier sur Trade Republic',
+  },
+] as const;
 
 /**
  * Gold/Silver ratio for proxy calculations

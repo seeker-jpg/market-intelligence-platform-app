@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Market Hours Service
  * 
  * Handles market hours detection for Trade Republic / Lang & Schwarz
@@ -6,7 +6,7 @@
  */
 
 import type { MarketState } from '@/lib/types/arbitrage';
-import { MARKET_HOURS_CONFIG } from '@/lib/config/instruments';
+import { MARKET_HOURS_CONFIG, GERMAN_EXCHANGES } from '@/lib/config/instruments';
 
 /**
  * Check if a given date is a German holiday
@@ -320,6 +320,46 @@ export function isWeekendGapPeriod(date: Date = new Date()): boolean {
   }
   
   return false;
+}
+
+/**
+ * Get trading state for a specific German exchange (Tradegate, Gettex, LS)
+ * Returns 'OPEN' | 'PRE_MARKET' | 'AFTER_HOURS' | 'CLOSED'
+ */
+export function getGermanExchangeState(
+  exchangeId: string,
+  date: Date = new Date()
+): MarketState {
+  const exchange = GERMAN_EXCHANGES.find((ex) => ex.id === exchangeId);
+  if (!exchange) return 'CLOSED';
+
+  const localTime = getTimeInTimezone(date, exchange.timezone);
+  const dayOfWeek = localTime.getDay();
+  const tradingDays = [1, 2, 3, 4, 5]; // Mon–Fri
+
+  if (!tradingDays.includes(dayOfWeek)) return 'CLOSED';
+  if (isGermanHoliday(localTime)) return 'CLOSED';
+
+  const currentTotalMinutes = localTime.getHours() * 60 + localTime.getMinutes();
+  const [oh, om] = exchange.open.split(':').map(Number);
+  const [ch, cm] = exchange.close.split(':').map(Number);
+  const openMin = oh * 60 + om;
+  const closeMin = ch * 60 + cm;
+
+  if (currentTotalMinutes < openMin) return 'PRE_MARKET';
+  if (currentTotalMinutes >= closeMin) return 'AFTER_HOURS';
+  return 'OPEN';
+}
+
+/**
+ * Get trading states for all German exchanges
+ */
+export function getAllGermanExchangeStates(date: Date = new Date()): Record<string, MarketState> {
+  const result: Record<string, MarketState> = {};
+  for (const ex of GERMAN_EXCHANGES) {
+    result[ex.id] = getGermanExchangeState(ex.id, date);
+  }
+  return result;
 }
 
 /**

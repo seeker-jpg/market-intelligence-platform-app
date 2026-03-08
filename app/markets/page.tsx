@@ -1,17 +1,17 @@
-﻿'use client';
+'use client';
 
 import { useState, useEffect } from 'react';
-import { TerminalLayout, PanelGrid, StatCard } from '@/components/terminal/terminal-layout';
+import { TerminalLayout } from '@/components/terminal/terminal-layout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { RefreshCw, Search, TrendingUp, TrendingDown, ArrowUpDown, ExternalLink } from 'lucide-react';
+import { RefreshCw, Search, TrendingUp, ArrowUpDown, Radio } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getMarketSnapshot } from '@/lib/binance-service';
 import {
   TR_GOLD_INSTRUMENTS,
   TR_SILVER_INSTRUMENTS,
-  BINANCE_INSTRUMENTS,
+  GERMAN_EXCHANGES,
 } from '@/lib/config/instruments';
 import type { TRInstrument, AssetType } from '@/lib/types/arbitrage';
 import { MOCK_TR_PRICES } from '@/lib/mock/tr-prices';
@@ -20,7 +20,10 @@ interface MarketData {
   goldPriceUsd: number;
   silverPriceUsd: number;
   eurUsdRate: number;
-  btcPrice: number;
+  goldSource: string;
+  silverSource: string;
+  eurSource: string;
+  lastUpdate: string;
 }
 
 type MarketPriceData = {
@@ -46,10 +49,13 @@ export default function MarketsPage() {
     try {
       const snapshot = await getMarketSnapshot();
       setMarketData({
-        goldPriceUsd: snapshot.xauUsd.price || 2650,
-        silverPriceUsd: (snapshot.xauUsd.price || 2650) / 85,
-        eurUsdRate: snapshot.eurUsd.price || 1.08,
-        btcPrice: 95000,
+        goldPriceUsd: snapshot.xauUsd.price ?? 0,
+        silverPriceUsd: snapshot.xagUsd.price ?? 0,
+        eurUsdRate: snapshot.eurUsd.price ?? 0,
+        goldSource: snapshot.xauUsd.source,
+        silverSource: snapshot.xagUsd.source,
+        eurSource: snapshot.eurUsd.source,
+        lastUpdate: new Date().toLocaleTimeString('fr-FR'),
       });
     } catch (error) {
       console.error('Échec du chargement des données de marché :', error);
@@ -121,33 +127,80 @@ export default function MarketsPage() {
       }
     >
       <div className="p-4 space-y-4">
-        <PanelGrid cols={4} gap="md">
-          <StatCard
-            label="Or (XAU/USD)"
-            value={`$${marketData?.goldPriceUsd.toFixed(2) || '--'}`}
-            change={1.25}
-            icon={<TrendingUp className="h-5 w-5" />}
-            valueClassName="text-gold"
-          />
-          <StatCard
-            label="Argent (XAG/USD)"
-            value={`$${marketData?.silverPriceUsd.toFixed(2) || '--'}`}
-            change={-0.42}
-            icon={<TrendingDown className="h-5 w-5" />}
-            valueClassName="text-silver"
-          />
-          <StatCard
-            label="EUR/USD"
-            value={marketData?.eurUsdRate.toFixed(4) || '--'}
-            change={0.15}
-          />
-          <StatCard
-            label="BTC/USDT"
-            value={`$${marketData?.btcPrice.toLocaleString() || '--'}`}
-            change={2.35}
-            valueClassName="text-[var(--warning)]"
-          />
-        </PanelGrid>
+        {/* Reference Price Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {/* Gold */}
+          <div className="terminal-panel p-4">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-xs text-muted-foreground uppercase tracking-wider">Or (XAU/USD)</p>
+                <p className="text-2xl font-bold font-mono tabular-nums mt-1 text-gold">
+                  {marketData?.goldPriceUsd ? `$${marketData.goldPriceUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '--'}
+                </p>
+              </div>
+              <div className="flex flex-col items-end gap-1">
+                <TrendingUp className="h-5 w-5 text-muted-foreground" />
+                <span className={cn(
+                  'text-[10px] px-1.5 py-0.5 rounded font-mono',
+                  marketData?.goldSource === 'binance' ? 'bg-[var(--warning)]/15 text-[var(--warning)]' : 'bg-muted text-muted-foreground'
+                )}>
+                  {marketData?.goldSource === 'binance' ? 'Binance' : marketData?.goldSource === 'coingecko' ? 'CoinGecko' : 'N/A'}
+                </span>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground mt-2 font-mono">
+              MAJ {marketData?.lastUpdate ?? '--'}
+            </p>
+          </div>
+
+          {/* Silver */}
+          <div className="terminal-panel p-4">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-xs text-muted-foreground uppercase tracking-wider">Argent (XAG/USD)</p>
+                <p className="text-2xl font-bold font-mono tabular-nums mt-1 text-silver">
+                  {marketData?.silverPriceUsd ? `$${marketData.silverPriceUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '--'}
+                </p>
+              </div>
+              <div className="flex flex-col items-end gap-1">
+                <Radio className="h-5 w-5 text-muted-foreground" />
+                <span className={cn(
+                  'text-[10px] px-1.5 py-0.5 rounded font-mono',
+                  marketData?.silverSource === 'coingecko' ? 'bg-blue-500/15 text-blue-400' : 'bg-muted text-muted-foreground'
+                )}>
+                  {marketData?.silverSource === 'coingecko' ? 'CoinGecko' : 'Dérivé'}
+                </span>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground mt-2 font-mono">
+              MAJ {marketData?.lastUpdate ?? '--'}
+            </p>
+          </div>
+
+          {/* EUR/USD */}
+          <div className="terminal-panel p-4">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-xs text-muted-foreground uppercase tracking-wider">EUR/USD</p>
+                <p className="text-2xl font-bold font-mono tabular-nums mt-1">
+                  {marketData?.eurUsdRate ? marketData.eurUsdRate.toFixed(4) : '--'}
+                </p>
+              </div>
+              <div className="flex flex-col items-end gap-1">
+                <TrendingUp className="h-5 w-5 text-muted-foreground" />
+                <span className={cn(
+                  'text-[10px] px-1.5 py-0.5 rounded font-mono',
+                  marketData?.eurSource === 'binance' ? 'bg-[var(--warning)]/15 text-[var(--warning)]' : 'bg-blue-500/15 text-blue-400'
+                )}>
+                  {marketData?.eurSource === 'binance' ? 'Binance' : marketData?.eurSource === 'coingecko' ? 'CoinGecko' : 'N/A'}
+                </span>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground mt-2 font-mono">
+              MAJ {marketData?.lastUpdate ?? '--'}
+            </p>
+          </div>
+        </div>
 
         <div className="terminal-panel p-4">
           <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
@@ -310,41 +363,76 @@ export default function MarketsPage() {
           )}
         </div>
 
+        {/* Exchange availability panel */}
         <div className="terminal-panel p-4">
           <h3 className="text-sm font-medium uppercase tracking-wider text-muted-foreground mb-4">
-            Prix de référence Binance
+            Bourses allemandes (trading hebdomadaire via Trade Republic)
           </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {BINANCE_INSTRUMENTS.filter(i => i.active).map((instrument) => (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {GERMAN_EXCHANGES.map((ex) => (
               <div
-                key={instrument.symbol}
-                className="bg-surface-2 rounded-lg p-3 border border-border/50"
+                key={ex.id}
+                className="bg-surface-2 rounded-lg p-3 border border-border/50 space-y-2"
               >
-                <div className="flex items-center justify-between mb-2">
-                  <span className="font-medium text-sm">{instrument.displayName}</span>
-                  <Badge variant="outline" className="text-[10px]">
-                    {instrument.symbol}
-                  </Badge>
-                </div>
                 <div className="flex items-center justify-between">
-                  <span className={cn(
-                    'font-mono text-lg',
-                    instrument.assetType === 'GOLD' ? 'text-gold' : 'text-silver'
-                  )}>
-                    ${instrument.symbol === 'PAXGUSDT' ? marketData?.goldPriceUsd.toFixed(2) :
-                      instrument.symbol === 'XAUTUSDT' ? marketData?.goldPriceUsd.toFixed(2) : '--'}
-                  </span>
-                  <a
-                    href={`https://www.binance.com/en/trade/${instrument.symbol}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-muted-foreground hover:text-foreground"
-                  >
-                    <ExternalLink className="h-4 w-4" />
-                  </a>
+                  <span className="font-medium text-sm">{ex.shortName}</span>
+                  {ex.status === 'confirmed' ? (
+                    <Badge className="text-[10px] bg-[var(--positive)]/20 text-[var(--positive)] border-[var(--positive)]/30">
+                      Confirmé
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-[10px] border-[var(--warning)]/50 text-[var(--warning)]">
+                      À vérifier
+                    </Badge>
+                  )}
                 </div>
+                <div className="text-xs text-muted-foreground">{ex.name}</div>
+                <div className="flex items-center justify-between text-xs font-mono">
+                  <span className="text-muted-foreground">Horaires CET</span>
+                  <span>{ex.open} – {ex.close}</span>
+                </div>
+                <div className="text-[10px] text-muted-foreground italic">{ex.notes}</div>
               </div>
             ))}
+          </div>
+
+          {/* Sources panel */}
+          <div className="mt-4 pt-4 border-t border-border/50">
+            <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-3">
+              Sources de prix temps réel
+            </h4>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="bg-surface-2 rounded p-3 border border-border/50">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm font-medium">Binance</span>
+                  <Badge variant="outline" className="text-[10px] border-[var(--warning)]/50 text-[var(--warning)]">
+                    PAXG/USDT
+                  </Badge>
+                </div>
+                <p className="text-xs text-muted-foreground">Or (XAU) – prix PAXG temps réel</p>
+                <p className="text-xs text-muted-foreground">EUR/USD – EURUSDC ou EURUSDT</p>
+              </div>
+              <div className="bg-surface-2 rounded p-3 border border-border/50">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm font-medium">CoinGecko</span>
+                  <Badge variant="outline" className="text-[10px] border-blue-400/50 text-blue-400">
+                    silver
+                  </Badge>
+                </div>
+                <p className="text-xs text-muted-foreground">Argent (XAG) – prix spot USD</p>
+                <p className="text-xs text-muted-foreground">Fallback EUR/USD si Binance KO</p>
+              </div>
+              <div className="bg-surface-2 rounded p-3 border border-border/50">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm font-medium">Trade Republic</span>
+                  <Badge variant="outline" className="text-[10px]">
+                    Simulé
+                  </Badge>
+                </div>
+                <p className="text-xs text-muted-foreground">ETC/ETF or & argent via TR API</p>
+                <p className="text-xs text-muted-foreground">Intégration directe à connecter</p>
+              </div>
+            </div>
           </div>
         </div>
       </div>
