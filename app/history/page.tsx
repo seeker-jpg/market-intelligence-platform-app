@@ -114,9 +114,9 @@ export default function HistoryPage() {
 
   const filteredSignals = useMemo(() => {
     let filtered = [...allSignals];
-    
-    // Filter by time range
-    const now = new Date();
+
+    // Use the same fixed reference date as signal generation to keep SSR/client identical
+    const now = new Date('2026-03-08T12:00:00.000Z');
     if (timeRange === '24h') {
       const cutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000);
       filtered = filtered.filter(s => new Date(s.timestamp) > cutoff);
