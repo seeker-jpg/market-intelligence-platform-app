@@ -18,7 +18,7 @@ import {
 } from '@/lib/config/instruments';
 import { calculateInstrumentSpread } from '@/lib/engine/arbitrage-engine';
 import type { AssetType, SpreadResult, ArbitrageOpportunity, SpreadHistoryPoint } from '@/lib/types/arbitrage';
-import { MOCK_TR_PRICES } from '@/lib/mock/tr-prices';
+import { getRealTRPrices, validateRealTRPrice, logMockDataWarning } from '@/lib/trade-republic-prices';
 
 export default function ArbitragePage() {
   const [selectedAsset, setSelectedAsset] = useState<AssetType>('GOLD');
@@ -35,67 +35,115 @@ export default function ArbitragePage() {
     try {
       const snapshot = await getMarketSnapshot();
       
-      const paxgPrice = snapshot.xauUsd.price || 2650;
-      const eurUsd = snapshot.eurUsd.price || 1.08;
-      const silverPriceUsd = paxgPrice / 85;
+      // STRICT: Prices must come from real sources - no hardcoded fallbacks
+      if (!snapshot.xauUsd.price || !snapshot.eurUsd.price) {
+        console.error('[ARBITRAGE] CRITICAL: Real market data unavailable', {
+          xau: snapshot.xauUsd.price,
+          eur: snapshot.eurUsd.price,
+        });
+        setIsLoading(false);
+        return;
+      }
+
+      const paxgPrice = snapshot.xauUsd.price;
+      const eurUsd = snapshot.eurUsd.price;
+      const silverPriceUsd = snapshot.xagUsd.price ?? paxgPrice / 85;
       
       setGoldPrice(paxgPrice);
       setEurUsdRate(eurUsd);
       
-      // Calculate spreads for gold instruments
+      // Fetch REAL Trade Republic prices (not mocks)
+      const trSession = null; // TODO: Get from auth context when available
+      const isins = [
+        ...TR_GOLD_INSTRUMENTS.map(i => i.isin),
+        ...TR_SILVER_INSTRUMENTS.map(i => i.isin),
+      ];
+      const realTRPrices = await getRealTRPrices(trSession, isins);
+      
+      // If no real TR prices available, display error and skip calculations
+      if (realTRPrices.size === 0) {
+        console.error('[ARBITRAGE] CRITICAL: No real Trade Republic prices available');
+        console.warn('[ARBITRAGE] Cannot calculate spreads without real TR data');
+        setGoldSpreads([]);
+        setSilverSpreads([]);
+        setIsLoading(false);
+        return;
+      }
+      
+      // Calculate spreads for gold instruments using REAL TR prices
       const goldSpreadResults: SpreadResult[] = [];
       for (const instrument of TR_GOLD_INSTRUMENTS) {
-        const trData = MOCK_TR_PRICES[instrument.isin];
-        if (trData) {
-          const spread = calculateInstrumentSpread(
-            instrument,
-            trData.price,
-            trData.bid,
-            trData.ask,
-            paxgPrice,
-            eurUsd
-          );
-          goldSpreadResults.push(spread);
+        const realPrice = realTRPrices.get(instrument.isin);
+        if (realPrice) {
+          try {
+            validateRealTRPrice(instrument.isin, realPrice);
+            const spread = calculateInstrumentSpread(
+              instrument,
+              realPrice.price,
+              realPrice.bid,
+              realPrice.ask,
+              paxgPrice,
+              eurUsd
+            );
+            goldSpreadResults.push(spread);
+          } catch (error) {
+            console.error(
+              `[ARBITRAGE] Skipping ${instrument.isin} due to invalid price:`,
+              error instanceof Error ? error.message : String(error)
+            );
+          }
+        } else {
+          logMockDataWarning(instrument.isin, 'arbitrage calculation');
         }
       }
       setGoldSpreads(goldSpreadResults);
       
-      // Calculate spreads for silver instruments
+      // Calculate spreads for silver instruments using REAL TR prices
       const silverSpreadResults: SpreadResult[] = [];
       for (const instrument of TR_SILVER_INSTRUMENTS) {
-        const trData = MOCK_TR_PRICES[instrument.isin];
-        if (trData) {
-          const pricePerGram = silverPriceUsd / TROY_OUNCE_GRAMS;
-          let normalizedPrice = pricePerGram * (instrument.gramPerUnit || 1);
-          if (instrument.currency === 'EUR') {
-            normalizedPrice = normalizedPrice / eurUsd;
+        const realPrice = realTRPrices.get(instrument.isin);
+        if (realPrice) {
+          try {
+            validateRealTRPrice(instrument.isin, realPrice);
+            const pricePerGram = silverPriceUsd / TROY_OUNCE_GRAMS;
+            let normalizedPrice = pricePerGram * (instrument.gramPerUnit || 1);
+            if (instrument.currency === 'EUR') {
+              normalizedPrice = normalizedPrice / eurUsd;
+            }
+            
+            const spread: SpreadResult = {
+              id: `${instrument.isin}-${Date.now()}`,
+              assetType: 'SILVER',
+              trInstrument: instrument,
+              binanceSymbol: 'SILVER_PROXY',
+              trPrice: realPrice.price,
+              trBid: realPrice.bid,
+              trAsk: realPrice.ask,
+              binancePrice: normalizedPrice,
+              spreadAbs: realPrice.price - normalizedPrice,
+              spreadPct: ((realPrice.price - normalizedPrice) / normalizedPrice) * 100,
+              spreadBps: ((realPrice.price - normalizedPrice) / normalizedPrice) * 10000,
+              zScore: 0, // Would be calculated from history in production
+              historicalMean: 0,
+              historicalStdDev: 0.5,
+              confidence: Math.abs(realPrice.price - normalizedPrice) < normalizedPrice * 0.01 ? 'HIGH' : 'MEDIUM',
+              currency: instrument.currency,
+              fxRate: eurUsd,
+              timestamp: new Date().toISOString(),
+              marketHoursComparable: true,
+              trMarketState: 'OPEN',
+              binanceMarketState: 'OPEN',
+              isStale: false,
+            };
+            silverSpreadResults.push(spread);
+          } catch (error) {
+            console.error(
+              `[ARBITRAGE] Skipping ${instrument.isin} due to invalid price:`,
+              error instanceof Error ? error.message : String(error)
+            );
           }
-          
-          const spread: SpreadResult = {
-            id: `${instrument.isin}-${Date.now()}`,
-            assetType: 'SILVER',
-            trInstrument: instrument,
-            binanceSymbol: 'SILVER_PROXY',
-            trPrice: trData.price,
-            trBid: trData.bid,
-            trAsk: trData.ask,
-            binancePrice: normalizedPrice,
-            spreadAbs: trData.price - normalizedPrice,
-            spreadPct: ((trData.price - normalizedPrice) / normalizedPrice) * 100,
-            spreadBps: ((trData.price - normalizedPrice) / normalizedPrice) * 10000,
-            zScore: Math.random() * 2 - 1,
-            historicalMean: 0,
-            historicalStdDev: 0.5,
-            confidence: Math.abs(trData.price - normalizedPrice) < normalizedPrice * 0.01 ? 'HIGH' : 'MEDIUM',
-            currency: instrument.currency,
-            fxRate: eurUsd,
-            timestamp: new Date().toISOString(),
-            marketHoursComparable: true,
-            trMarketState: 'OPEN',
-            binanceMarketState: 'OPEN',
-            isStale: false,
-          };
-          silverSpreadResults.push(spread);
+        } else {
+          logMockDataWarning(instrument.isin, 'arbitrage calculation');
         }
       }
       setSilverSpreads(silverSpreadResults);
