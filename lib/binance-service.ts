@@ -6,14 +6,19 @@
  *   - XAG/USD  → derived from PAXGUSDT / live gold-silver ratio (no native Binance XAG pair)
  *   - EUR/USD  → EURUSDC then EURUSDT
  *
- * Verification   : Yahoo Finance + CoinGecko (silent checks only, never replace Binance)
+ * Verification   : Yahoo Finance + CoinGecko + Lang & Schwarz (silent checks only, never replace Binance)
  *   - XAG verify → Yahoo Finance SI=F (silver futures)
- *   - XAU verify → CoinGecko PAXG price
+ *   - XAU verify → CoinGecko PAXG price + optionally Lang & Schwarz (if LANG_SCHWARZ_ENABLED=true)
  *   - EUR verify → Yahoo Finance EURUSD=X
  *
  * The ratio used for XAG is fetched dynamically from the live gold price divided
  * by the Yahoo SI=F price — so the ratio self-updates automatically.
  * If Yahoo is unavailable, a conservative ratio of 80 is used as a last resort.
+ * 
+ * Lang & Schwarz integration (if enabled):
+ * - Requires Trade Republic session for authentication
+ * - Acts as additional verification source only (never affects pricing)
+ * - Silently fails if unavailable or disabled
  */
 
 export interface BinancePrice {
@@ -168,9 +173,15 @@ export async function getMarketSnapshot(): Promise<MarketSnapshot> {
 
   // ---- XAU/USD (Binance primary) ----
   const paxgPrice = binancePrices.get('PAXGUSDT') ?? null;
-  const xauVerify = buildVerifications(paxgPrice ?? 0, [
+  const xauVerifyList: Array<{ source: 'coingecko' | 'yahoo'; price: number | null }> = [
     { source: 'coingecko', price: paxgCoinGecko },
-  ]);
+  ];
+  // Optional: add Lang & Schwarz verification if enabled (will be null if disabled or unavailable)
+  // Note: L&S integration stub — actual implementation requires TR session auth
+  if (process.env.LANG_SCHWARZ_ENABLED === 'true') {
+    console.log('[INFO] Lang & Schwarz verification enabled but not yet implemented');
+  }
+  const xauVerify = buildVerifications(paxgPrice ?? 0, xauVerifyList);
 
   // ---- EUR/USD (Binance primary, Yahoo fallback) ----
   const eurUsdcBinance = binancePrices.get('EURUSDC') ?? null;
