@@ -29,6 +29,8 @@ export default function ArbitragePage() {
   const [silverSpreads, setSilverSpreads] = useState<SpreadResult[]>([]);
   const [spreadHistory, setSpreadHistory] = useState<SpreadHistoryPoint[]>([]);
   const [opportunities, setOpportunities] = useState<ArbitrageOpportunity[]>([]);
+  const [dataStatus, setDataStatus] = useState<'loading' | 'ready' | 'unavailable'>('loading');
+  const [dataStatusMessage, setDataStatusMessage] = useState('');
 
   const fetchData = useCallback(async () => {
     setIsLoading(true);
@@ -41,6 +43,8 @@ export default function ArbitragePage() {
           xau: snapshot.xauUsd.price,
           eur: snapshot.eurUsd.price,
         });
+        setDataStatus('unavailable');
+        setDataStatusMessage('Données de marché en direct non disponibles');
         setIsLoading(false);
         return;
       }
@@ -60,12 +64,14 @@ export default function ArbitragePage() {
       ];
       const realTRPrices = await getRealTRPrices(trSession, isins);
       
-      // If no real TR prices available, display error and skip calculations
+      // If no real TR prices available, show UI with reference prices only
       if (realTRPrices.size === 0) {
-        console.error('[ARBITRAGE] CRITICAL: No real Trade Republic prices available');
-        console.warn('[ARBITRAGE] Cannot calculate spreads without real TR data');
+        console.warn('[ARBITRAGE] No real Trade Republic prices available yet');
+        console.log('[ARBITRAGE] Showing reference prices (Binance) only. Connect Trade Republic session for spread calculations.');
         setGoldSpreads([]);
         setSilverSpreads([]);
+        setDataStatus('unavailable');
+        setDataStatusMessage('Connectez Trade Republic pour voir les écarts. Affichage des prix de référence Binance.');
         setIsLoading(false);
         return;
       }
@@ -147,50 +153,11 @@ export default function ArbitragePage() {
         }
       }
       setSilverSpreads(silverSpreadResults);
-
-      // Update spread history
-      const allSpreads = selectedAsset === 'GOLD' ? goldSpreadResults : silverSpreadResults;
-      const avgSpread = allSpreads.length > 0
-        ? allSpreads.reduce((sum, s) => sum + s.spreadPct, 0) / allSpreads.length
-        : 0;
-      
-      setSpreadHistory(prev => [
-        ...prev.slice(-59),
-        {
-          timestamp: new Date().toISOString(),
-          spreadPct: avgSpread,
-          spreadBps: avgSpread * 100,
-          trPrice: allSpreads[0]?.trPrice ?? 0,
-          binancePrice: allSpreads[0]?.binancePrice ?? 0,
-        }
-      ]);
-
-      // Generate opportunities
-      const allSpreadResults = [...goldSpreadResults, ...silverSpreadResults];
-      const opps: ArbitrageOpportunity[] = allSpreadResults
-        .filter(s => Math.abs(s.spreadPct) > 0.5)
-        .map(s => ({
-          id: s.id,
-          assetType: s.assetType,
-          direction: s.spreadPct < 0 ? 'BUY_TR_SELL_BINANCE' as const : 'BUY_BINANCE_SELL_TR' as const,
-          trInstrument: s.trInstrument,
-          binanceSymbol: s.binanceSymbol,
-          entrySpreadPct: s.spreadPct,
-          currentSpreadPct: s.spreadPct,
-          potentialProfitPct: Math.abs(s.spreadPct) * 0.7,
-          potentialProfitAbs: Math.abs(s.spreadAbs) * 0.7,
-          estimatedFees: Math.abs(s.spreadPct) * 0.3,
-          netProfitPct: Math.abs(s.spreadPct) * 0.4,
-          confidence: s.confidence,
-          riskLevel: Math.abs(s.spreadPct) > 1.5 ? 'HIGH' as const : 'MEDIUM' as const,
-          timestamp: s.timestamp,
-          expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
-          status: 'OPEN' as const,
-        }))
-        .slice(0, 5);
-      setOpportunities(opps);
+      setDataStatus('ready');
       
     } catch (error) {
+      setDataStatus('unavailable');
+      setDataStatusMessage(`Erreur: ${error instanceof Error ? error.message : 'Erreur de chargement'}`);
       console.error('Failed to fetch data:', error);
     } finally {
       setIsLoading(false);
@@ -249,6 +216,23 @@ export default function ArbitragePage() {
             </div>
           </div>
         </div>
+
+        {/* Data Status Message */}
+        {dataStatus === 'unavailable' && (
+          <div className="terminal-panel p-4 border-l-4 border-[var(--warning)] bg-[var(--warning)]/5 space-y-2">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="h-5 w-5 text-[var(--warning)] flex-shrink-0 mt-0.5" />
+              <div className="flex-1 space-y-1">
+                <p className="text-sm font-medium text-[var(--warning)]">Données de Trade Republic non disponibles</p>
+                <p className="text-xs text-muted-foreground">{dataStatusMessage}</p>
+                <p className="text-xs text-muted-foreground mt-2">
+                  L&apos;intégration Trade Republic nécessite une authentification active. 
+                  Les prix de référence Binance sont affichés ci-dessus. Les écarts de trading nécessitent les données réelles de Trade Republic.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Stats Row */}
         <PanelGrid cols={4} gap="md">
