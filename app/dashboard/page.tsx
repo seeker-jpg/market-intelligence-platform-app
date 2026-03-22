@@ -47,10 +47,25 @@ export default function DashboardPage() {
     try {
       const snapshot = await getMarketSnapshot();
       
-      const paxgPrice = snapshot.xauUsd.price || 2650;
-      const eurUsd = snapshot.eurUsd.price || 1.08;
-      // Use real XAG price from CoinGecko if available, otherwise fallback to gold/silver ratio
-      const silverPriceUsd = snapshot.xagUsd.price || paxgPrice / GOLD_SILVER_RATIO.default;
+      // STRICT RULE: Never fallback to hardcoded prices
+      // If Binance fails → price is null, display "N/A", do NOT use 2650 or 1.08
+      const paxgPrice = snapshot.xauUsd.price;
+      const eurUsd = snapshot.eurUsd.price;
+      const silverPriceUsd = snapshot.xagUsd.price;
+      
+      // If critical prices are null, set error state and stop
+      if (paxgPrice === null || eurUsd === null || silverPriceUsd === null) {
+        console.error('[DATA_INTEGRITY] Critical prices unavailable', {
+          xau: paxgPrice,
+          xag: silverPriceUsd,
+          eur: eurUsd,
+        });
+        setGoldPrice(0);
+        setSilverPrice(0);
+        setEurUsdRate(0);
+        setIsLoading(false);
+        return;
+      }
       
       setGoldPrice(paxgPrice);
       setSilverPrice(silverPriceUsd);

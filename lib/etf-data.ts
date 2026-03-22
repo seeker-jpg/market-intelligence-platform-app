@@ -1,6 +1,14 @@
 /**
  * Trade Republic ETF Data Module
  * Handles ETF pricing with Bid/Ask spreads
+ * 
+ * ⚠️ CRITICAL: All data below is MOCK/SIMULATED - For Testing Only
+ * 
+ * These are NOT real Trade Republic prices. They are hardcoded simulation data.
+ * In production, NEVER display this data without explicit "TEST DATA" label.
+ * Do NOT use in production arbitrage calculations.
+ * 
+ * Replace with real Trade Republic API calls before going live.
  */
 
 export interface ETFPrice {
